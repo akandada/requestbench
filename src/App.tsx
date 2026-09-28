@@ -3,6 +3,8 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Sparkles,
+  BookOpen,
+  FolderOpen,
   ArrowUpRight,
   ArrowDownToLine,
   Upload,
@@ -42,12 +44,32 @@ import RequestGroups from "./RequestGroups";
 
 import WorkflowAssistant from "./WorkflowAssistant";
 
-type View = "requests" | "environments" | "fixtures" | "history" | "workflows";
+import type { Project } from "./Projects";
+import { ProjectOverview, ApiExplainer } from "./ApiExplorer";
+
+type View =
+  | "requests"
+  | "environments"
+  | "fixtures"
+  | "history"
+  | "workflows"
+  | "overview";
 type Result = { data?: ResponseData; error?: string; loading?: boolean };
 const native = isTauri();
-export default function App() {
+export default function App({
+  project,
+  onManageProjects,
+  registerBeforeLeave,
+}: {
+  project: Project;
+  onManageProjects: () => void;
+  registerBeforeLeave: (fn: () => Promise<boolean>) => void;
+}) {
+  const projectId = project.id;
+  const [technical, setTechnical] = useState(false);
+  const [planning, setPlanning] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null),
-    [view, setView] = useState<View>("requests"),
+    [view, setView] = useState<View>("overview"),
     [selected, setSelected] = useState(""),
     [envId, setEnvId] = useState(""),
     [tab, setTab] = useState("headers"),
@@ -73,6 +95,9 @@ export default function App() {
     calls = useRef(new Map<string, string>());
   const notify = (message: string) => setNotice(message);
   useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [view, selected, technical]);
+  useEffect(() => {
     if (!notice) return;
     const timeout = setTimeout(() => setNotice(""), 6000);
     return () => clearTimeout(timeout);
@@ -82,7 +107,7 @@ export default function App() {
       setSaveStatus("Desktop app required");
       return;
     }
-    invoke<Workspace | null>("load_workspace")
+    invoke<Workspace | null>("load_workspace", { projectId })
       .then((data) => {
         const w = data ?? starter();
         setWorkspace(w);
@@ -93,7 +118,7 @@ export default function App() {
         if (!data) void save(w, 0);
       })
       .catch((e) => notify(`Could not load workspace: ${e}`));
-    void invoke<HistoryEntry[]>("load_history")
+    void invoke<HistoryEntry[]>("load_history", { projectId })
       .then(setHistory)
       .catch((e) => notify(String(e)));
   }, []);
@@ -101,7 +126,9 @@ export default function App() {
     setSaveStatus("Saving…");
     saveQueue.current = saveQueue.current
       .catch(() => {})
-      .then(() => invoke<Workspace>("save_workspace", { workspace: w }))
+      .then(() =>
+        invoke<Workspace>("save_workspace", { workspace: w, projectId }),
+      )
       .then((clean) => {
         if (version === revision.current) {
           setWorkspace(clean as Workspace);
@@ -132,6 +159,15 @@ export default function App() {
     return true;
   }
   flushRef.current = flush;
+  registerBeforeLeave(async () => {
+    if (importing || calls.current.size || planning) {
+      notify(
+        "Wait for workflow planning or imports to finish, and stop active requests before switching projects.",
+      );
+      return false;
+    }
+    return await flushRef.current();
+  });
   useEffect(() => {
     if (!native) return;
     let disposed = false;
@@ -183,12 +219,15 @@ export default function App() {
     }));
   function select(nextView: View, id?: string) {
     setView(nextView);
+    setTechnical(false);
     if (nextView !== view) {
       setQuery("");
       setVisibleCount(100);
     }
     const list =
-      nextView === "history" || nextView === "workflows"
+      nextView === "history" ||
+      nextView === "workflows" ||
+      nextView === "overview"
         ? []
         : (workspace?.[nextView] ?? []);
     const next = id ?? list[0]?.id ?? "";
@@ -237,11 +276,12 @@ export default function App() {
     try {
       const data = await invoke<ResponseData>("send_request", {
         callId,
+        projectId,
         request,
         environment: workspace.environments.find((e) => e.id === envId) ?? null,
       });
       setResults((r) => ({ ...r, [id]: { data } }));
-      setHistory(await invoke<HistoryEntry[]>("load_history"));
+      setHistory(await invoke<HistoryEntry[]>("load_history", { projectId }));
     } catch (e) {
       setResults((r) => ({ ...r, [id]: { error: String(e) } }));
     } finally {
@@ -253,7 +293,8 @@ export default function App() {
       if (
         (e.metaKey || e.ctrlKey) &&
         e.key === "Enter" &&
-        view === "requests"
+        view === "requests" &&
+        technical
       ) {
         e.preventDefault();
         void send();
@@ -338,7 +379,8 @@ export default function App() {
     }
   }
   function remove() {
-    if (view === "history" || view === "workflows") return;
+    if (view === "history" || view === "workflows" || view === "overview")
+      return;
     update((w) => ({ ...w, [view]: w[view].filter((x) => x.id !== selected) }));
     setOpenTabs((t) => t.filter((x) => x !== selected));
     setSelected("");
@@ -361,13 +403,14 @@ export default function App() {
     return (
       <div className="launch-message">
         <Terminal size={36} />
-        <h1>Opening your workspace…</h1>
+        <h1>Opening your project…</h1>
+        <button onClick={onManageProjects}>Back to projects</button>
         {notice && <p role="alert">{notice}</p>}
       </div>
     );
   const result = results[selected];
   const filteredItems =
-    view === "history" || view === "workflows"
+    view === "history" || view === "workflows" || view === "overview"
       ? []
       : workspace[view].filter((x) =>
           x.name.toLowerCase().includes(query.toLowerCase()),
@@ -400,20 +443,28 @@ export default function App() {
               setIncludeSecrets(false);
             }}
           >
-            <ArrowDownToLine size={15} /> Export workspace
+            <ArrowDownToLine size={15} /> Export project
           </button>
         </div>
       </header>
       <div className="shell">
         <aside>
-          <div className="workspace-label">PERSONAL WORKSPACE</div>
+          <button className="project-switcher" onClick={onManageProjects}>
+            <FolderOpen size={18} />
+            <span>
+              <small>PROJECT</small>
+              <strong>{project.name}</strong>
+              <small>Switch or manage projects →</small>
+            </span>
+          </button>
           <nav>
             {(
               [
-                { id: "requests", label: "Requests", icon: ArrowUpRight },
+                { id: "overview", label: "Overview", icon: BookOpen },
+                { id: "requests", label: "API library", icon: ArrowUpRight },
                 { id: "environments", label: "Environments", icon: Settings2 },
-                { id: "fixtures", label: "Fixtures", icon: Braces },
-                { id: "history", label: "History", icon: Clock },
+                { id: "fixtures", label: "Data examples", icon: Braces },
+                { id: "history", label: "Activity", icon: Clock },
                 {
                   id: "workflows",
                   label: "Workflow assistant",
@@ -431,82 +482,87 @@ export default function App() {
                 <span>
                   {id === "history"
                     ? history.length
-                    : id === "workflows"
+                    : id === "workflows" || id === "overview"
                       ? ""
                       : workspace[id].length}
                 </span>
               </button>
             ))}
           </nav>
-          {view !== "history" && view !== "workflows" && (
-            <>
-              <div className="list-heading">
-                <span>
-                  {view === "requests" ? "COLLECTIONS" : view.toUpperCase()}
-                </span>
-                <button
-                  className="icon-button"
-                  aria-label="Add item"
-                  onClick={add}
-                >
-                  <Plus size={18} />
-                </button>
-              </div>
-              <label className="search">
-                <Search size={14} />
-                <input
-                  aria-label="Search items"
-                  placeholder={
-                    view === "requests"
-                      ? "Find APIs or categories…"
-                      : `Find ${view}…`
-                  }
-                  value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value);
-                    setVisibleCount(100);
-                  }}
-                />
-              </label>
-              <div className="item-list">
-                {view === "requests" ? (
-                  <RequestGroups
-                    requests={workspace.requests}
-                    selected={selected}
-                    query={query}
-                    onSelect={(id) => select("requests", id)}
+          {view !== "history" &&
+            view !== "workflows" &&
+            view !== "overview" && (
+              <>
+                <div className="list-heading">
+                  <span>
+                    {view === "requests"
+                      ? "CAPABILITY GROUPS"
+                      : view.toUpperCase()}
+                  </span>
+                  <button
+                    className="icon-button"
+                    aria-label="Add item"
+                    onClick={add}
+                  >
+                    <Plus size={18} />
+                  </button>
+                </div>
+                <label className="search">
+                  <Search size={14} />
+                  <input
+                    aria-label="Search items"
+                    placeholder={
+                      view === "requests"
+                        ? "Find APIs or categories…"
+                        : `Find ${view}…`
+                    }
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setVisibleCount(100);
+                    }}
                   />
-                ) : (
-                  <>
-                    {filteredItems.slice(0, visibleCount).map((item) => (
-                      <button
-                        key={item.id}
-                        className={`item ${selected === item.id ? "selected" : ""}`}
-                        onClick={() => select(view, item.id)}
-                      >
-                        {view === "fixtures" ? (
-                          <Braces size={15} />
-                        ) : (
-                          <Settings2 size={15} />
-                        )}
-                        <span className="item-label">{item.name}</span>
-                      </button>
-                    ))}
-                    {filteredItems.length > visibleCount && (
-                      <button
-                        className="text-button"
-                        onClick={() => setVisibleCount((n) => n + 100)}
-                      >
-                        Show next{" "}
-                        {Math.min(100, filteredItems.length - visibleCount)} ·{" "}
-                        {filteredItems.length.toLocaleString()} total
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            </>
-          )}
+                </label>
+                <div className="item-list">
+                  {view === "requests" ? (
+                    <RequestGroups
+                      projectId={projectId}
+                      requests={workspace.requests}
+                      selected={selected}
+                      query={query}
+                      onSelect={(id) => select("requests", id)}
+                    />
+                  ) : (
+                    <>
+                      {filteredItems.slice(0, visibleCount).map((item) => (
+                        <button
+                          key={item.id}
+                          className={`item ${selected === item.id ? "selected" : ""}`}
+                          onClick={() => select(view, item.id)}
+                        >
+                          {view === "fixtures" ? (
+                            <Braces size={15} />
+                          ) : (
+                            <Settings2 size={15} />
+                          )}
+                          <span className="item-label">{item.name}</span>
+                        </button>
+                      ))}
+                      {filteredItems.length > visibleCount && (
+                        <button
+                          className="text-button"
+                          onClick={() => setVisibleCount((n) => n + 100)}
+                        >
+                          Show next{" "}
+                          {Math.min(100, filteredItems.length - visibleCount)} ·{" "}
+                          {filteredItems.length.toLocaleString()} total
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              </>
+            )}
           <div className="sidebar-foot">
             <LockKeyhole size={14} />
             <div>
@@ -546,15 +602,52 @@ export default function App() {
                 ))}
             </div>
           )}
+          <div hidden={view !== "overview"}>
+            <ProjectOverview
+              project={project}
+              workspace={workspace}
+              onOpen={(id) => select("requests", id)}
+              onImport={startImport}
+              onWorkflow={() => select("workflows")}
+            />
+          </div>
           <div hidden={view !== "workflows"}>
             <WorkflowAssistant
+              projectId={projectId}
+              onPlanningChange={setPlanning}
               requests={workspace.requests}
               results={results}
               fixtures={workspace.fixtures}
-              onOpenRequest={(id) => select("requests", id)}
+              onOpenRequest={(id) => {
+                select("requests", id);
+                setTechnical(true);
+              }}
             />
           </div>
-          <div className="main-content" hidden={view === "workflows"}>
+          {view === "requests" && request && !technical && (
+            <ApiExplainer
+              request={request}
+              response={results[request.id]?.data}
+              onTechnical={() => setTechnical(true)}
+              onWorkflow={() => select("workflows")}
+            />
+          )}
+          <div
+            className="main-content"
+            hidden={
+              view === "workflows" ||
+              view === "overview" ||
+              (view === "requests" && !!request && !technical)
+            }
+          >
+            {view === "requests" && technical && (
+              <button
+                className="back-to-explainer"
+                onClick={() => setTechnical(false)}
+              >
+                ← Back to plain-language overview
+              </button>
+            )}
             <div className="page-heading">
               <div>
                 <div className="eyebrow">
@@ -594,6 +687,20 @@ export default function App() {
                 </label>
               )}
             </div>
+            {view === "environments" && (
+              <p className="hint">
+                An environment chooses where requests go and supplies values
+                such as the server address. Use a test environment when
+                exploring; production may contain real customer data.
+              </p>
+            )}
+            {view === "fixtures" && (
+              <p className="hint">
+                Data examples help your team understand the information sent to
+                an API or returned by it. They are saved samples, not live
+                results.
+              </p>
+            )}
             {view === "history" ? (
               <div className="history">
                 <p className="hint">
@@ -1092,7 +1199,7 @@ export default function App() {
               <Terminal size={13} /> Rust request engine
             </span>
             <span>On your device. Under your control.</span>
-            <span>Requestbench 0.4.1</span>
+            <span>Requestbench 0.5.0</span>
           </footer>
         </main>
       </div>

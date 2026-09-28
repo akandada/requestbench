@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, useRef } from "react";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import AiProgress from "./AiProgress";
 import type { AiProgress as AiProgressState } from "./ai-progress";
+import { draftKey, readDraft } from "./workflow-draft";
 import WorkflowBuilder from "./WorkflowBuilder";
 import type { RequestItem, ResponseData, Fixture } from "./model";
 import {
@@ -14,11 +15,15 @@ import {
 } from "./workflow";
 import { stepSpecs, pythonCode, typescriptCode } from "./workflow-code";
 export default function WorkflowAssistant({
+  projectId,
+  onPlanningChange,
   requests,
   results,
   fixtures,
   onOpenRequest,
 }: {
+  projectId: string;
+  onPlanningChange: (busy: boolean) => void;
   requests: RequestItem[];
   results: Record<
     string,
@@ -27,15 +32,25 @@ export default function WorkflowAssistant({
   fixtures: Fixture[];
   onOpenRequest: (id: string) => void;
 }) {
+  const [draft] = useState(() => {
+    try {
+      return readDraft(
+        localStorage.getItem(draftKey(projectId)),
+        new Set(requests.map((r) => r.id)),
+      );
+    } catch {
+      return undefined;
+    }
+  });
   const [goal, setGoal] = useState(
-      "Show me the APIs to create and update a profile",
+      draft?.goal ?? "Show me the APIs to create and update a profile",
     ),
     [engine, setEngine] = useState("local"),
-    [plan, setPlan] = useState<WorkflowPlan | null>(null),
+    [plan, setPlan] = useState<WorkflowPlan | null>(draft?.plan ?? null),
     [language, setLanguage] = useState<"python" | "typescript">("python"),
     [settings, setSettings] = useState(false),
     [key, setKey] = useState(""),
-    [hasKey, setHasKey] = useState(false),
+    [hasKey, setHasKey] = useState<boolean | null>(null),
     [model, setModel] = useState("gpt-5-mini"),
     [preview, setPreview] = useState<{
       goal: string;
@@ -46,6 +61,18 @@ export default function WorkflowAssistant({
   const [aiProgress, setAiProgress] = useState<AiProgressState>({
     phase: "idle",
   });
+  useEffect(() => {
+    try {
+      localStorage.setItem(draftKey(projectId), JSON.stringify({ goal, plan }));
+    } catch {
+      setMessage(
+        "This workflow draft could not be saved locally. Export the starter code before switching projects.",
+      );
+    }
+  }, [projectId, goal, plan]);
+  useEffect(() => {
+    onPlanningChange(aiProgress.phase === "working");
+  }, [aiProgress.phase, onPlanningChange]);
   const progressRef = useRef<HTMLDivElement>(null);
   const pendingRef = useRef(false);
   const lastAttempt = useRef<{
@@ -92,12 +119,6 @@ export default function WorkflowAssistant({
       setBusy(false);
     }
   }
-  useEffect(() => {
-    if (isTauri())
-      void invoke<boolean>("ai_status")
-        .then(setHasKey)
-        .catch(() => {});
-  }, []);
   const candidates = useMemo(
     () => rankEndpoints(requests, goal),
     [requests, goal],
@@ -137,7 +158,7 @@ export default function WorkflowAssistant({
       setPlan(localWorkflow(requests, goal));
       return;
     }
-    if (!hasKey) {
+    if (hasKey === false) {
       setSettings(true);
       setMessage(
         "Add your OpenAI API key to enable AI planning. Local search works without a key.",
@@ -265,6 +286,22 @@ export default function WorkflowAssistant({
               }
             >
               Save key
+            </button>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  const found = await invoke<boolean>("ai_status");
+                  setHasKey(found);
+                  setMessage(
+                    found
+                      ? "A saved OpenAI key is available."
+                      : "No saved OpenAI key found.",
+                  );
+                })
+              }
+            >
+              Check saved key
             </button>
             {hasKey && (
               <button
