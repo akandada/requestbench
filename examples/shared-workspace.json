@@ -1,0 +1,14 @@
+{
+  "format": "requestbench",
+  "version": 1,
+  "requests": [
+    {"name":"Local demo","method":"GET","url":"{{base_url}}/api/demo","headers":[],"body":""}
+  ],
+  "environments": [
+    {"name":"Shared local","variables":[{"key":"base_url","value":"http://127.0.0.1:4317","enabled":true,"secret":false},{"key":"api_token","value":"","enabled":true,"secret":true}]}
+  ],
+  "fixtures": [
+    {"name":"Create customer","kind":"request","body":"{\"name\":\"Alex Morgan\",\"email\":\"alex@example.com\"}"},
+    {"name":"Customer response","kind":"response","body":"{\"id\":42,\"name\":\"Alex Morgan\"}"}
+  ]
+}

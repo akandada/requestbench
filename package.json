@@ -1,0 +1,32 @@
+{
+  "name": "requestbench",
+  "version": "0.4.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/desktop.mjs dev",
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "desktop:build": "node scripts/desktop.mjs build --bundles app",
+    "test": "tsx --test src/*.test.ts src/*.test.tsx",
+    "test:legacy": "node --test test/*.test.mjs",
+    "legacy": "node server.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "jsonc-parser": "^3.3.1",
+    "lucide-react": "^0.468.0",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^24",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "prettier": "^3.9.9",
+    "tsx": "^4",
+    "typescript": "^5.9",
+    "vite": "^7"
+  }
+}

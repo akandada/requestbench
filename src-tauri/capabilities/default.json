@@ -1,0 +1,6 @@
+{
+  "identifier": "main-capability",
+  "description": "Main desktop window",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-destroy"]
+}

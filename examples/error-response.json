@@ -1,0 +1,13 @@
+{
+  "format": "requestbench",
+  "version": 1,
+  "requests": [],
+  "environments": [],
+  "fixtures": [
+    {
+      "name": "Validation error response",
+      "kind": "response",
+      "body": "{\n  \"error\": \"validation_failed\",\n  \"message\": \"An email address is required.\",\n  \"fields\": {\n    \"email\": \"required\"\n  }\n}"
+    }
+  ]
+}
