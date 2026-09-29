@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod ai;
-use rusqlite::{params, Connection};
+mod projects;
+#[cfg(test)]
+use rusqlite::params;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -40,6 +43,7 @@ fn read_secret(env: &str, key: &str) -> Result<String, String> {
 fn init_db(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS workspace (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY, data TEXT NOT NULL);").map_err(err)
 }
+#[cfg(test)]
 fn persist_workspace(conn: &Connection, value: &Value) -> Result<(), String> {
     conn.execute("INSERT INTO workspace (id,data) VALUES (1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",params![value.to_string()]).map_err(err)?;
     Ok(())
@@ -75,24 +79,22 @@ fn protect_secrets(
     Ok(())
 }
 #[tauri::command]
-fn load_workspace(state: tauri::State<AppState>) -> Result<Option<Value>, String> {
-    let db = state.db.lock().map_err(err)?;
-    let result = db.query_row("SELECT data FROM workspace WHERE id=1", [], |r| {
-        r.get::<_, String>(0)
-    });
-    match result {
-        Ok(data) => serde_json::from_str(&data).map(Some).map_err(err),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(err(e)),
-    }
+fn load_workspace(
+    project_id: String,
+    state: tauri::State<AppState>,
+) -> Result<Option<Value>, String> {
+    projects::read(&*state.db.lock().map_err(err)?, &project_id)
 }
 #[tauri::command]
-fn save_workspace(mut workspace: Value, state: tauri::State<AppState>) -> Result<Value, String> {
+fn save_workspace(
+    project_id: String,
+    mut workspace: Value,
+    state: tauri::State<AppState>,
+) -> Result<Value, String> {
     protect_secrets(&mut workspace, |env, key, value| {
         entry(env, key)?.set_password(value).map_err(err)
     })?;
-    let db = state.db.lock().map_err(err)?;
-    persist_workspace(&db, &workspace)?;
+    projects::write(&*state.db.lock().map_err(err)?, &project_id, &workspace)?;
     Ok(workspace)
 }
 #[tauri::command]
@@ -309,11 +311,13 @@ async fn execute_cancellable(
 }
 #[tauri::command]
 async fn send_request(
+    project_id: String,
     call_id: String,
     request: ApiRequest,
     environment: Option<Environment>,
     state: tauri::State<'_, AppState>,
 ) -> Result<ApiResponse, String> {
+    projects::read(&*state.db.lock().map_err(err)?, &project_id)?;
     let token = CancellationToken::new();
     state
         .pending
@@ -331,12 +335,7 @@ async fn send_request(
     if let Ok(ref r) = outcome {
         let history = json!({"id":call_id,"name":name,"method":method,"status":r.status,"duration":r.duration,"at":timestamp()});
         let db = state.db.lock().map_err(err)?;
-        db.execute(
-            "INSERT INTO history (data) VALUES (?1)",
-            params![history.to_string()],
-        )
-        .map_err(err)?;
-        db.execute("DELETE FROM history WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT 100)",[]).map_err(err)?;
+        projects::append_history(&db, &project_id, &history)?;
     }
     outcome
 }
@@ -348,15 +347,10 @@ fn cancel_request(call_id: String, state: tauri::State<AppState>) -> Result<(), 
     Ok(())
 }
 #[tauri::command]
-fn load_history(state: tauri::State<AppState>) -> Result<Vec<Value>, String> {
-    let db = state.db.lock().map_err(err)?;
-    let mut stmt = db
-        .prepare("SELECT data FROM history ORDER BY id DESC LIMIT 100")
-        .map_err(err)?;
-    let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(err)?;
-    rows.map(|r| serde_json::from_str(&r.map_err(err)?).map_err(err))
-        .collect()
+fn load_history(project_id: String, state: tauri::State<AppState>) -> Result<Vec<Value>, String> {
+    projects::history(&*state.db.lock().map_err(err)?, &project_id)
 }
+
 fn read_import_file(path: &std::path::Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("Could not read collection: {e}"))
 }
@@ -426,6 +420,7 @@ fn main() {
             std::fs::create_dir_all(&dir)?;
             let conn = Connection::open(dir.join("workspace.sqlite3"))?;
             init_db(&conn).map_err(std::io::Error::other)?;
+            projects::migrate(&conn).map_err(std::io::Error::other)?;
             app.manage(AppState {
                 db: Mutex::new(conn),
                 pending: Mutex::new(HashMap::new()),
@@ -438,6 +433,9 @@ fn main() {
             ai::delete_ai_key,
             ai::generate_ai_workflow,
             ai::save_generated_file,
+            projects::list_projects,
+            projects::create_project,
+            projects::update_project,
             load_workspace,
             save_workspace,
             send_request,

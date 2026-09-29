@@ -6,28 +6,36 @@ fn entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new("com.requestbench.ai", "openai-api-key").map_err(|e| e.to_string())
 }
 #[tauri::command]
-pub fn ai_status() -> Result<bool, String> {
-    match entry()?.get_password() {
+pub async fn ai_status() -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(|| match entry()?.get_password() {
         Ok(s) => Ok(!s.is_empty()),
         Err(keyring::Error::NoEntry) => Ok(false),
         Err(e) => Err(format!("Could not access credential store: {e}")),
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub fn save_ai_key(api_key: String) -> Result<(), String> {
+pub async fn save_ai_key(api_key: String) -> Result<(), String> {
     if api_key.trim().is_empty() {
         return Err("Enter an API key".into());
     }
-    entry()?
-        .set_password(api_key.trim())
-        .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        entry()?
+            .set_password(api_key.trim())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub fn delete_ai_key() -> Result<(), String> {
-    match entry()?.delete_credential() {
+pub async fn delete_ai_key() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| match entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

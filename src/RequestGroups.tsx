@@ -7,8 +7,7 @@ import {
 } from "./request-groups";
 import type { RequestItem } from "./model";
 
-const preferenceKey = "requestbench.expandedGroups.v1";
-function savedExpansion(): Record<string, boolean> {
+function savedExpansion(preferenceKey: string): Record<string, boolean> {
   try {
     const value = JSON.parse(localStorage.getItem(preferenceKey) ?? "{}");
     return value && typeof value === "object" && !Array.isArray(value)
@@ -21,21 +20,24 @@ function savedExpansion(): Record<string, boolean> {
   }
 }
 export default function RequestGroups({
+  projectId,
   requests,
   selected,
   query,
   onSelect,
 }: {
+  projectId: string;
   requests: RequestItem[];
   selected: string;
   query: string;
   onSelect: (id: string) => void;
 }) {
+  const preferenceKey = `requestbench.expandedGroups.v1.${projectId}`;
   const groups = useMemo(
     () => groupRequests(requests, query),
     [requests, query],
   );
-  const [expanded, setExpanded] = useState(savedExpansion);
+  const [expanded, setExpanded] = useState(() => savedExpansion(preferenceKey));
   const [searchExpansion, setSearchExpansion] = useState<
     Record<string, boolean>
   >({});

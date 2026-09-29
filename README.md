@@ -87,7 +87,7 @@ For AI planning, choose **OpenAI workflow planning** and add your own API key in
 
 The model selects only known endpoint IDs through a strict schema; code generation stays local and derives from the saved requests. Python (`requests`) and TypeScript (Node.js 22+ `fetch`) starters support JSON/JSONC bodies, bearer/Basic authentication, variable substitution, error handling, and timeouts. Copy or save `.py` / `.ts` files. Strings become placeholders, numeric samples become 0, and boolean samples become false; review all payloads. No generated request executes automatically. Unsupported imported features block generated execution until you review and implement them.
 
-Arrows indicate suggested order, not verified data dependencies. Response schemas are not available to the planner, so identifier mappings are explicit TODOs. Plans are session-only; export the code before closing the app. The assistant searches saved requests, not standalone fixture bodies, and does not execute workflows.
+Arrows indicate suggested order, not verified data dependencies. Response schemas are not available to the planner, so identifier mappings are explicit TODOs. Before version 0.5.0, plans were session-only. Current versions save workflow drafts per project. The assistant searches saved requests, not standalone fixture bodies, and does not execute workflows.
 
 Provider implementation references: [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) and [GPT-5 mini](https://developers.openai.com/api/docs/models/gpt-5-mini).
 
@@ -97,8 +97,20 @@ Build a suggested workflow or choose **New blank workflow**. Use the API library
 
 Select **Request**, **Payload**, or **Response** on a node to inspect it. Requests are saved templates, with unresolved environment variables. Sensitive header values are hidden by default; payloads are displayed locally as saved. The response view can display the last captured result from this app session (including HTTP status, timing, headers, and body), an imported Postman response example, or a manually chosen response fixture. These sources are labeled separately. A last result can predate edits to its request; the canvas does not execute calls. Use the request editor to send an individual request and return to the workflow to see its result.
 
-New Postman imports preserve response examples through Requestbench export/import. Previously imported collections that discarded examples do not gain them retroactively. Response fixtures have no automatic endpoint association. Connections indicate call order; automatic field mappings, branching, and workflow execution are not implemented. Plans/layouts remain session-only.
+New Postman imports preserve response examples through Requestbench export/import. Previously imported collections that discarded examples do not gain them retroactively. Response fixtures have no automatic endpoint association. Connections indicate call order; automatic field mappings, branching, and workflow execution are not implemented. Workflow drafts are saved per project as of 0.5.0; canvas layouts remain session-only.
 
 ## OpenAI request feedback (0.4.1)
 
 Sending a workflow to OpenAI shows an animated working panel with the model, endpoint count, elapsed time, and a longer-wait message after 30 seconds. It indicates activity rather than estimated completion. Duplicate sends are blocked while the request is pending. Completion shows a success or no-matches message. Failures remain visible with error details and actions to retry the same request, edit AI settings, or use local search; failed requests leave the current workflow intact. Animations respect reduced-motion preferences.
+
+## Projects and product exploration (0.5.0)
+
+The app opens on a project dashboard. Create a named project for each product or initiative, add a description, and open it to explore its capabilities. Rename projects in **Manage**, or archive and restore them without deleting data. **Switch or manage projects** saves the open workspace before returning to the dashboard. Imports and exports apply to the current project.
+
+Each project has independent requests, environments, examples, and activity history. On first launch, the existing workspace and history are copied into **My first project**. Original SQLite tables remain untouched as a migration backup; environment IDs stay unchanged so existing Keychain references continue to work. Older app versions do not understand project storage and should not be used for editing after migration.
+
+The project **Overview** groups APIs into capabilities and includes a short glossary. Selecting an API opens a plain-language page with the imported description, a request-to-result diagram, observed input field names/types, and guidance about side effects and response statuses. This page never sends requests, including with the send keyboard shortcut. **Open technical editor** reveals the existing URL, headers, body, authentication, and Send controls. Summaries are inferred from HTTP methods and imported examples; they do not invent required fields, response schemas, or business guarantees.
+
+Workflow questions and the latest plan are saved locally per project, including across restarts. They are kept in the app's local UI storage, separate from project JSON exports. Canvas positions and captured responses remain session-only. API keys remain in Keychain and are shared at the app level. Workflow drafts created in earlier app versions cannot be recovered automatically because those versions did not save them.
+
+Project opening does not read your OpenAI key. To check a saved key explicitly, use **AI settings → Check saved key**. Credential operations run off the UI thread so a macOS Keychain prompt cannot freeze project browsing.
